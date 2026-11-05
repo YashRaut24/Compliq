@@ -30,13 +30,28 @@ async function analyzeComplaint(message) {
     throw new Error("Complaint message must be a non-empty string");
   }
 
-  const response = await generateText(buildAnalysisPrompt(message));
-
+  const prompt = buildAnalysisPrompt(message);
+  const maxAttempts = 2;
   let result;
-  try {
-    result = JSON.parse(response);
-  } catch {
-    throw new Error("LLM response was not valid JSON");
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const retryInstruction =
+      attempt === 1
+        ? ""
+        : "\n\nYour previous response was not valid JSON. Return only one valid JSON object with the required keys.";
+
+    const response = await generateText(prompt + retryInstruction);
+
+    try {
+      result = JSON.parse(response);
+      break;
+    } catch {
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `LLM response was not valid JSON after ${maxAttempts} attempts`
+        );
+      }
+    }
   }
 
   return ComplaintAnalysisSchema.parse(result);
