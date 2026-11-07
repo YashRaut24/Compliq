@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Business = require("../models/Business");
 const Complaint = require("../models/Complaint");
 const { analyzeComplaint } = require("../analysis");
+const checkReplySafety = require("./replySafety");
 
 const ComplaintInputSchema = z.strictObject({
   businessId: z
@@ -17,15 +18,6 @@ function pipelineError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
-}
-
-function checkReplySafety(replyDraft) {
-  const promisesRefund =
-    /\b(refund (?:has been|was|is) (?:issued|processed|approved)|we (?:have|will) refund)\b/i;
-
-  if (promisesRefund.test(replyDraft)) {
-    throw pipelineError("Generated reply failed the safety check", 502);
-  }
 }
 
 async function processComplaint(input) {
