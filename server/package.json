@@ -13,10 +13,12 @@
   "keywords": [],
   "dependencies": {
     "cors": "^2.8.6",
+    "csv-parse": "^7.0.3",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
     "groq-sdk": "^1.6.0",
     "mongoose": "^9.11.4",
+    "multer": "^2.5.0",
     "zod": "^4.6.7"
   }
 }
