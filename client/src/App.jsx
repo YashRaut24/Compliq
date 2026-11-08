@@ -78,8 +78,36 @@ function titleCase(value = '') {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-function ComplaintCard({ complaint }) {
+function ComplaintCard({ complaint, onReplyUpdated }) {
   const id = complaint._id || complaint.id
+  const [editingReply, setEditingReply] = useState(false)
+  const [replyDraft, setReplyDraft] = useState(complaint.replyDraft || '')
+  const [savingReply, setSavingReply] = useState(false)
+  const [replyError, setReplyError] = useState('')
+  const [replySaved, setReplySaved] = useState(false)
+
+  async function saveReply(event) {
+    event.preventDefault()
+    setSavingReply(true)
+    setReplyError('')
+    setReplySaved(false)
+
+    try {
+      const response = await axios.patch(
+        `${API_BASE_URL}/complaints/${id}/reply`,
+        { replyDraft },
+      )
+      onReplyUpdated(response.data.complaint)
+      setEditingReply(false)
+      setReplySaved(true)
+    } catch (requestError) {
+      setReplyError(
+        requestError.response?.data?.message || 'Could not save this reply. Please try again.',
+      )
+    } finally {
+      setSavingReply(false)
+    }
+  }
 
   return (
     <article className="complaint-card">
@@ -111,13 +139,60 @@ function ComplaintCard({ complaint }) {
             </span>
             {id && <><span className="meta-divider" /><span className="complaint-id">#{String(id).slice(-6)}</span></>}
           </div>
-          {complaint.replyDraft && (
-            <details className="reply-details">
-              <summary>View reply draft <Icon name="arrow" size={14} /></summary>
-              <p>{complaint.replyDraft}</p>
-            </details>
-          )}
         </div>
+        <section className="reply-editor" aria-label="Reply draft">
+          <div className="reply-editor-heading">
+            <span className="reply-label">REPLY DRAFT</span>
+            {!editingReply && (
+              <button
+                type="button"
+                className="reply-edit-button"
+                onClick={() => {
+                  setReplyDraft(complaint.replyDraft || '')
+                  setReplyError('')
+                  setReplySaved(false)
+                  setEditingReply(true)
+                }}
+              >
+                {complaint.replyDraft ? 'Edit draft' : 'Add draft'}
+              </button>
+            )}
+          </div>
+          {editingReply ? (
+            <form className="reply-edit-form" onSubmit={saveReply}>
+              <textarea
+                value={replyDraft}
+                onChange={(event) => setReplyDraft(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                required
+                aria-label="Edit reply draft"
+              />
+              {replyError && <p className="form-error" role="alert">{replyError}</p>}
+              <div className="reply-form-actions">
+                <span className="character-count">{replyDraft.length}/2000</span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setEditingReply(false)}
+                  disabled={savingReply}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="submit-button" disabled={savingReply || !replyDraft.trim()}>
+                  {savingReply ? 'Saving…' : 'Save draft'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              {complaint.replyDraft
+                ? <p className="reply-draft-text">{complaint.replyDraft}</p>
+                : <p className="reply-placeholder">No reply draft yet.</p>}
+              {replySaved && <p className="success-message" role="status">Draft saved.</p>}
+            </>
+          )}
+        </section>
       </div>
     </article>
   )
@@ -132,6 +207,13 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [showSubmitForm, setShowSubmitForm] = useState(false)
+  const [businessId, setBusinessId] = useState('')
+  const [newMessage, setNewMessage] = useState('')
+  const [newSource, setNewSource] = useState('email')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [submitSuccess, setSubmitSuccess] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -175,6 +257,40 @@ function App() {
   }, [complaints, search])
 
   const activeFilterCount = [category, urgency, status].filter(Boolean).length
+
+  async function submitComplaint(event) {
+    event.preventDefault()
+    setSubmitting(true)
+    setSubmitError('')
+    setSubmitSuccess('')
+
+    try {
+      await axios.post(`${API_BASE_URL}/complaints`, {
+        businessId: businessId.trim(),
+        message: newMessage.trim(),
+        source: newSource,
+      })
+      setNewMessage('')
+      setShowSubmitForm(false)
+      setSubmitSuccess('Complaint submitted. Its analysis and reply draft are ready.')
+      setRefreshKey((key) => key + 1)
+    } catch (requestError) {
+      setSubmitError(
+        requestError.response?.data?.message || 'Could not submit the complaint. Please try again.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function updateComplaintReply(updatedComplaint) {
+    const updatedId = updatedComplaint._id || updatedComplaint.id
+    setComplaints((current) =>
+      current.map((complaint) =>
+        (complaint._id || complaint.id) === updatedId ? updatedComplaint : complaint,
+      ),
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -244,6 +360,76 @@ function App() {
               <Icon name="refresh" size={16} />
               <span>Refresh</span>
             </button>
+          </div>
+
+          <div className="submit-area">
+            <div className="submit-area-top">
+              <div>
+                <strong>Have a new customer complaint?</strong>
+                <span>Submit it for AI analysis and a reply draft.</span>
+              </div>
+              <button
+                type="button"
+                className="submit-button"
+                onClick={() => {
+                  setShowSubmitForm((shown) => !shown)
+                  setSubmitError('')
+                  setSubmitSuccess('')
+                }}
+                aria-expanded={showSubmitForm}
+                aria-controls="complaint-submit-form"
+              >
+                {showSubmitForm ? 'Close form' : 'New complaint'}
+              </button>
+            </div>
+            {submitSuccess && <p className="success-message submit-feedback" role="status">{submitSuccess}</p>}
+            {showSubmitForm && (
+              <form id="complaint-submit-form" className="submit-form" onSubmit={submitComplaint}>
+                <div className="form-field">
+                  <label htmlFor="business-id">Business ID</label>
+                  <input
+                    id="business-id"
+                    value={businessId}
+                    onChange={(event) => setBusinessId(event.target.value)}
+                    placeholder="Paste an existing business ID"
+                    required
+                  />
+                  <span className="field-hint">Use the MongoDB ID of an existing business.</span>
+                </div>
+                <div className="form-field">
+                  <label htmlFor="complaint-source">Source</label>
+                  <select
+                    id="complaint-source"
+                    value={newSource}
+                    onChange={(event) => setNewSource(event.target.value)}
+                  >
+                    <option value="email">Email</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+                <div className="form-field form-field-wide">
+                  <label htmlFor="complaint-message">Customer message</label>
+                  <textarea
+                    id="complaint-message"
+                    value={newMessage}
+                    onChange={(event) => setNewMessage(event.target.value)}
+                    placeholder="Paste the customer’s complaint here…"
+                    maxLength={5000}
+                    rows={4}
+                    required
+                  />
+                  <span className="field-hint">{newMessage.length}/5000 characters</span>
+                </div>
+                {submitError && <p className="form-error form-field-wide" role="alert">{submitError}</p>}
+                <div className="submit-form-actions form-field-wide">
+                  <span className="field-hint">The generated reply is a draft for your review.</span>
+                  <button type="submit" className="submit-button" disabled={submitting || !newMessage.trim() || !businessId.trim()}>
+                    {submitting ? 'Analyzing…' : 'Analyze complaint'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
 
           <section className="inbox-panel" aria-label="Complaint list">
@@ -332,7 +518,11 @@ function App() {
             ) : (
               <div className="complaint-list">
                 {visibleComplaints.map((complaint) => (
-                  <ComplaintCard key={complaint._id || complaint.id} complaint={complaint} />
+                  <ComplaintCard
+                    key={complaint._id || complaint.id}
+                    complaint={complaint}
+                    onReplyUpdated={updateComplaintReply}
+                  />
                 ))}
               </div>
             )}

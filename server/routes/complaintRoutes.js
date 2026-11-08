@@ -11,5 +11,6 @@ const upload = multer({
 router.get("/", complaintController.getComplaints);
 router.post("/", complaintController.createComplaint);
 router.post("/bulk", upload.single("file"), complaintController.uploadComplaints);
+router.patch("/:id/reply", complaintController.updateComplaintReply);
 
 module.exports = router;

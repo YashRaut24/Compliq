@@ -1,7 +1,9 @@
 const { z, ZodError } = require("zod");
+const mongoose = require("mongoose");
 const Complaint = require("../models/Complaint");
 const { processComplaint } = require("../services/complaintPipeline");
 const { parseComplaintCsv } = require("../services/complaintCsv");
+const checkReplySafety = require("../services/replySafety");
 
 const ComplaintFiltersSchema = z.strictObject({
   category: z.enum(["refund", "delay", "abuse", "other"]).optional(),
@@ -57,6 +59,52 @@ exports.createComplaint = async (req, res) => {
       message:
         statusCode === 500 ? "Failed to process complaint" : error.message,
     });
+  }
+};
+
+exports.updateComplaintReply = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ message: "Invalid complaint ID" });
+  }
+
+  let replyDraft;
+  try {
+    ({ replyDraft } = z.strictObject({
+      replyDraft: z.string().trim().min(1).max(2000),
+    }).parse(req.body));
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({
+        message: "Invalid reply draft",
+        errors: error.issues,
+      });
+    }
+    throw error;
+  }
+
+  try {
+    checkReplySafety(replyDraft);
+  } catch {
+    return res.status(400).json({
+      message: "Reply draft violates the refund policy and cannot be saved",
+    });
+  }
+
+  try {
+    const complaint = await Complaint.findByIdAndUpdate(
+      req.params.id,
+      { $set: { replyDraft } },
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!complaint) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+
+    res.status(200).json({ complaint });
+  } catch (error) {
+    console.error("Failed to update complaint reply:", error);
+    res.status(500).json({ message: "Failed to update reply draft" });
   }
 };
 
