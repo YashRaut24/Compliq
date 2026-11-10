@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api'
@@ -26,6 +39,15 @@ const statuses = [
   { value: 'in_review', label: 'In review' },
   { value: 'resolved', label: 'Resolved' },
 ]
+
+const categoryColors = ['#d3a66d', '#88a7c7', '#cd827a', '#9ca89c']
+
+const chartTooltipStyle = {
+  border: '1px solid #e7eae5',
+  borderRadius: '8px',
+  boxShadow: '0 6px 20px #24372d12',
+  fontSize: '11px',
+}
 
 function Icon({ name, size = 18 }) {
   const common = {
@@ -76,6 +98,187 @@ function formatDate(value) {
 
 function titleCase(value = '') {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function DashboardPage() {
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadStats() {
+      setLoading(true)
+      setError('')
+      try {
+        const response = await axios.get(`${API_BASE_URL}/stats`, {
+          signal: controller.signal,
+        })
+        setStats(response.data)
+      } catch (requestError) {
+        if (controller.signal.aborted) return
+        setError(
+          requestError.response?.data?.message ||
+            'Could not load dashboard statistics. Check that the API server is running and try again.',
+        )
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }
+
+    loadStats()
+    return () => controller.abort()
+  }, [refreshKey])
+
+  const categoryData = categories.slice(1).map(({ value, label }) => ({
+    name: label,
+    count: stats?.byCategory?.[value] || 0,
+  }))
+  const priorityData = urgencies.slice(1).map(({ value, label }) => ({
+    name: label,
+    count: stats?.byPriority?.[value] || 0,
+  }))
+  const statusData = statuses.slice(1).map(({ value, label }) => ({
+    name: label,
+    count: stats?.byStatus?.[value] || 0,
+  }))
+  const hasComplaints = (stats?.total || 0) > 0
+
+  return (
+    <div className="dashboard-content">
+      <div className="dashboard-toolbar">
+        <p>Insights across all complaints in your workspace.</p>
+        <button
+          type="button"
+          className="refresh-button"
+          onClick={() => setRefreshKey((key) => key + 1)}
+          disabled={loading}
+        >
+          <Icon name="refresh" size={16} />
+          <span>{loading ? 'Updating…' : 'Refresh data'}</span>
+        </button>
+      </div>
+
+      {error ? (
+        <div className="feedback-state dashboard-feedback" role="alert">
+          <span className="feedback-icon">!</span>
+          <h3>Dashboard data is unavailable</h3>
+          <p>{error}</p>
+          <button type="button" className="text-button" onClick={() => setRefreshKey((key) => key + 1)}>
+            Try again
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="stat-cards">
+            <article className="stat-card">
+              <span className="stat-label">TOTAL COMPLAINTS</span>
+              <strong>{loading ? '—' : stats.total}</strong>
+              <span className="stat-footnote">All recorded complaints</span>
+            </article>
+            <article className="stat-card stat-card-open">
+              <span className="stat-label">NEEDS ATTENTION</span>
+              <strong>{loading ? '—' : stats.unresolved}</strong>
+              <span className="stat-footnote">New or in review</span>
+            </article>
+            <article className="stat-card stat-card-urgent">
+              <span className="stat-label">URGENT PRIORITY</span>
+              <strong>{loading ? '—' : stats.urgent}</strong>
+              <span className="stat-footnote">Requires timely attention</span>
+            </article>
+            <article className="stat-card stat-card-resolved">
+              <span className="stat-label">RESOLVED</span>
+              <strong>{loading ? '—' : stats.byStatus.resolved}</strong>
+              <span className="stat-footnote">Marked as resolved</span>
+            </article>
+          </div>
+
+          {loading ? (
+            <div className="feedback-state dashboard-loading" role="status">
+              <span className="loading-spinner" />
+              <h3>Loading dashboard</h3>
+              <p>Preparing your complaint insights…</p>
+            </div>
+          ) : !hasComplaints ? (
+            <div className="feedback-state dashboard-empty">
+              <div className="empty-icon"><Icon name="chart" size={23} /></div>
+              <h3>No insights yet</h3>
+              <p>Charts will appear here after complaints have been added to your workspace.</p>
+            </div>
+          ) : (
+            <div className="dashboard-chart-grid">
+              <section className="chart-card chart-card-category">
+                <div className="chart-heading">
+                  <div><h2>Complaints by category</h2><p>What customers are contacting you about</p></div>
+                  <span className="chart-mark">01</span>
+                </div>
+                <div className="chart-area">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={categoryData}
+                        dataKey="count"
+                        nameKey="name"
+                        innerRadius="57%"
+                        outerRadius="79%"
+                        paddingAngle={3}
+                        stroke="none"
+                      >
+                        {categoryData.map((entry, index) => (
+                          <Cell key={entry.name} fill={categoryColors[index]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={chartTooltipStyle} />
+                      <Legend iconType="circle" iconSize={7} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="donut-total"><strong>{stats.total}</strong><span>total</span></div>
+                </div>
+              </section>
+
+              <section className="chart-card">
+                <div className="chart-heading">
+                  <div><h2>Priority breakdown</h2><p>Current complaint urgency</p></div>
+                  <span className="chart-mark">02</span>
+                </div>
+                <div className="chart-area">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={priorityData} layout="vertical" margin={{ top: 8, right: 12, bottom: 4, left: 2 }}>
+                      <CartesianGrid stroke="#edf0eb" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#8b938d', fontSize: 10 }} />
+                      <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#68736b', fontSize: 10 }} width={58} />
+                      <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: '#f5f7f3' }} />
+                      <Bar dataKey="count" name="Complaints" fill="#809574" radius={[0, 5, 5, 0]} barSize={17} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+
+              <section className="chart-card chart-card-status">
+                <div className="chart-heading">
+                  <div><h2>Resolution status</h2><p>Where each complaint stands</p></div>
+                  <span className="chart-mark">03</span>
+                </div>
+                <div className="chart-area chart-area-status">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={statusData} margin={{ top: 14, right: 8, bottom: 0, left: -18 }}>
+                      <CartesianGrid stroke="#edf0eb" vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#68736b', fontSize: 10 }} />
+                      <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#8b938d', fontSize: 10 }} />
+                      <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: '#f5f7f3' }} />
+                      <Bar dataKey="count" name="Complaints" fill="#9aab8f" radius={[5, 5, 0, 0]} barSize={35} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 function ComplaintCard({ complaint, onReplyUpdated }) {
@@ -199,6 +402,7 @@ function ComplaintCard({ complaint, onReplyUpdated }) {
 }
 
 function App() {
+  const [activePage, setActivePage] = useState('inbox')
   const [complaints, setComplaints] = useState([])
   const [category, setCategory] = useState('')
   const [urgency, setUrgency] = useState('')
@@ -309,16 +513,25 @@ function App() {
 
         <div className="nav-label">MENU</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          <a className="nav-item active" href="#inbox" aria-current="page">
+          <button
+            className={`nav-item ${activePage === 'inbox' ? 'active' : ''}`}
+            type="button"
+            onClick={() => setActivePage('inbox')}
+            aria-current={activePage === 'inbox' ? 'page' : undefined}
+          >
             <Icon name="inbox" />
             <span>Inbox</span>
             <span className="nav-count">{complaints.length}</span>
-          </a>
-          <a className="nav-item disabled-nav" href="#insights" onClick={(event) => event.preventDefault()}>
+          </button>
+          <button
+            className={`nav-item ${activePage === 'dashboard' ? 'active' : ''}`}
+            type="button"
+            onClick={() => setActivePage('dashboard')}
+            aria-current={activePage === 'dashboard' ? 'page' : undefined}
+          >
             <Icon name="chart" />
-            <span>Insights</span>
-            <span className="soon-label">SOON</span>
-          </a>
+            <span>Dashboard</span>
+          </button>
           <a className="nav-item disabled-nav" href="#business" onClick={(event) => event.preventDefault()}>
             <Icon name="building" />
             <span>Business</span>
@@ -335,9 +548,9 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-content" id="inbox">
+      <main className="main-content" id={activePage}>
         <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-separator">/</span><strong>Inbox</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-separator">/</span><strong>{activePage === 'inbox' ? 'Inbox' : 'Dashboard'}</strong></div>
           <div className="topbar-right">
             <span className="today-label">{new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())}</span>
             <span className="user-avatar">Y</span>
@@ -347,21 +560,31 @@ function App() {
         <section className="inbox-content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow"><span className="eyebrow-line" /> CUSTOMER CARE</div>
-              <h1>Complaint inbox</h1>
-              <p className="page-subtitle">A clear view of every customer concern, all in one place.</p>
+              <div className="eyebrow"><span className="eyebrow-line" /> {activePage === 'inbox' ? 'CUSTOMER CARE' : 'WORKSPACE OVERVIEW'}</div>
+              <h1>{activePage === 'inbox' ? 'Complaint inbox' : 'Dashboard'}</h1>
+              <p className="page-subtitle">
+                {activePage === 'inbox'
+                  ? 'A clear view of every customer concern, all in one place.'
+                  : 'A clear picture of customer concerns and how your team is responding.'}
+              </p>
             </div>
-            <button
-              className="refresh-button"
-              type="button"
-              onClick={() => setRefreshKey((key) => key + 1)}
-              disabled={loading}
-            >
-              <Icon name="refresh" size={16} />
-              <span>Refresh</span>
-            </button>
+            {activePage === 'inbox' && (
+              <button
+                className="refresh-button"
+                type="button"
+                onClick={() => setRefreshKey((key) => key + 1)}
+                disabled={loading}
+              >
+                <Icon name="refresh" size={16} />
+                <span>Refresh</span>
+              </button>
+            )}
           </div>
 
+          {activePage === 'dashboard' ? (
+            <DashboardPage />
+          ) : (
+            <>
           <div className="submit-area">
             <div className="submit-area-top">
               <div>
@@ -534,6 +757,8 @@ function App() {
               </div>
             )}
           </section>
+            </>
+          )}
           <footer className="page-footer"><span>COMPLIQ</span><span>Customer conversations, handled thoughtfully.</span></footer>
         </section>
       </main>
