@@ -16,6 +16,15 @@ import {
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api'
+const ACTIVE_BUSINESS_KEY = 'compliq.activeBusinessId'
+
+function getStoredBusinessId() {
+  try {
+    return window.localStorage.getItem(ACTIVE_BUSINESS_KEY) || ''
+  } catch {
+    return ''
+  }
+}
 
 const categories = [
   { value: '', label: 'All categories' },
@@ -281,6 +290,213 @@ function DashboardPage() {
   )
 }
 
+function SettingsPage({ activeBusinessId, onBusinessSaved }) {
+  const [businessId, setBusinessId] = useState(activeBusinessId)
+  const [loadedBusinessId, setLoadedBusinessId] = useState('')
+  const [name, setName] = useState('')
+  const [industry, setIndustry] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  useEffect(() => {
+    if (!activeBusinessId || activeBusinessId === loadedBusinessId) return undefined
+
+    const controller = new AbortController()
+    async function loadActiveBusiness() {
+      setLoading(true)
+      setError('')
+      try {
+        const response = await axios.get(
+          `${API_BASE_URL}/businesses/${encodeURIComponent(activeBusinessId)}`,
+          { signal: controller.signal },
+        )
+        setName(response.data.business.name)
+        setIndustry(response.data.business.industry || '')
+        setBusinessId(activeBusinessId)
+        setLoadedBusinessId(activeBusinessId)
+      } catch (requestError) {
+        if (controller.signal.aborted) return
+        setError(requestError.response?.data?.message || 'Could not load this business profile.')
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }
+
+    loadActiveBusiness()
+    return () => controller.abort()
+  }, [activeBusinessId, loadedBusinessId])
+
+  async function loadBusiness(id = businessId) {
+    const requestedId = id.trim()
+    if (!requestedId) {
+      setError('Enter a business ID to load its profile.')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const response = await axios.get(`${API_BASE_URL}/businesses/${encodeURIComponent(requestedId)}`)
+      setName(response.data.business.name)
+      setIndustry(response.data.business.industry || '')
+      setBusinessId(requestedId)
+      setLoadedBusinessId(requestedId)
+      onBusinessSaved(response.data.business)
+      setSuccess('Business profile loaded.')
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Could not load this business profile.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function saveBusiness(event) {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const payload = { name: name.trim(), industry: industry.trim() }
+      const response = loadedBusinessId && loadedBusinessId === businessId.trim()
+        ? await axios.patch(`${API_BASE_URL}/businesses/${encodeURIComponent(loadedBusinessId)}`, payload)
+        : await axios.post(`${API_BASE_URL}/businesses`, payload)
+      const business = response.data.business
+      const savedId = business._id
+      let successMessage = 'Business profile saved.'
+
+      try {
+        window.localStorage.setItem(ACTIVE_BUSINESS_KEY, savedId)
+      } catch {
+        successMessage = 'Profile saved, but this browser could not remember the selected business.'
+      }
+
+      setBusinessId(savedId)
+      setLoadedBusinessId(savedId)
+      setName(business.name)
+      setIndustry(business.industry || '')
+      onBusinessSaved(business)
+      setError('')
+      setSuccess(successMessage)
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Could not save this business profile.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function startNewProfile() {
+    setBusinessId('')
+    setLoadedBusinessId('')
+    setName('')
+    setIndustry('')
+    setError('')
+    setSuccess('')
+  }
+
+  const hasLoadedProfile = Boolean(loadedBusinessId && loadedBusinessId === businessId.trim())
+
+  return (
+    <div className="settings-content">
+      <section className="settings-card">
+        <div className="settings-card-heading">
+          <div className="settings-icon"><Icon name="building" size={19} /></div>
+          <div>
+            <h2>Business profile</h2>
+            <p>Manage the business details associated with your complaint workspace.</p>
+          </div>
+        </div>
+
+        <form className="settings-form" onSubmit={saveBusiness}>
+          <div className="settings-id-row">
+            <div className="form-field">
+              <label htmlFor="settings-business-id">Business ID</label>
+              <input
+                id="settings-business-id"
+                value={businessId}
+                onChange={(event) => {
+                  setBusinessId(event.target.value)
+                  setError('')
+                  setSuccess('')
+                }}
+                placeholder="Leave blank to create a business profile"
+                aria-describedby="settings-id-help"
+              />
+              <span className="field-hint" id="settings-id-help">
+                {activeBusinessId
+                  ? 'This browser remembers the selected business ID.'
+                  : 'To edit an existing profile, enter its ID and load it first.'}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="secondary-button load-business-button"
+              onClick={() => loadBusiness()}
+              disabled={loading || !businessId.trim()}
+            >
+              {loading ? 'Loading…' : 'Load profile'}
+            </button>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="settings-business-name">Business name</label>
+            <input
+              id="settings-business-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Northside Family Clinic"
+              maxLength={120}
+              required
+            />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="settings-business-industry">Industry <span className="optional-label">OPTIONAL</span></label>
+            <input
+              id="settings-business-industry"
+              value={industry}
+              onChange={(event) => setIndustry(event.target.value)}
+              placeholder="e.g. Healthcare, retail, hospitality"
+              maxLength={120}
+            />
+          </div>
+
+          {error && <p className="form-error" role="alert">{error}</p>}
+          {success && <p className="success-message" role="status">{success}</p>}
+
+          <div className="settings-form-actions">
+            <span className="field-hint">
+              {hasLoadedProfile ? 'Editing the loaded business profile.' : 'Saving without an ID creates a new business.'}
+            </span>
+            <div>
+              {hasLoadedProfile && (
+                <button type="button" className="text-button" onClick={startNewProfile}>
+                  Create new profile
+                </button>
+              )}
+              <button
+                type="submit"
+                className="submit-button"
+                disabled={saving || loading || (Boolean(businessId.trim()) && !hasLoadedProfile)}
+              >
+                {saving ? 'Saving…' : hasLoadedProfile ? 'Save changes' : 'Create profile'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside className="settings-note">
+        <strong>About your profile</strong>
+        <p>Your profile is stored in the database. The selected business ID is remembered only in this browser and is used to prefill the complaint submission form.</p>
+      </aside>
+    </div>
+  )
+}
+
 function ComplaintCard({ complaint, onReplyUpdated }) {
   const id = complaint._id || complaint.id
   const [editingReply, setEditingReply] = useState(false)
@@ -403,6 +619,8 @@ function ComplaintCard({ complaint, onReplyUpdated }) {
 
 function App() {
   const [activePage, setActivePage] = useState('inbox')
+  const [activeBusinessId, setActiveBusinessId] = useState(getStoredBusinessId)
+  const [workspaceName, setWorkspaceName] = useState('Small business')
   const [complaints, setComplaints] = useState([])
   const [category, setCategory] = useState('')
   const [urgency, setUrgency] = useState('')
@@ -412,7 +630,7 @@ function App() {
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [showSubmitForm, setShowSubmitForm] = useState(false)
-  const [businessId, setBusinessId] = useState('')
+  const [businessId, setBusinessId] = useState(getStoredBusinessId)
   const [newMessage, setNewMessage] = useState('')
   const [newSource, setNewSource] = useState('email')
   const [submitting, setSubmitting] = useState(false)
@@ -496,6 +714,12 @@ function App() {
     )
   }
 
+  function handleBusinessSaved(business) {
+    setActiveBusinessId(business._id)
+    setBusinessId(business._id)
+    setWorkspaceName(business.name)
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -506,8 +730,8 @@ function App() {
 
         <div className="workspace-label">WORKSPACE</div>
         <div className="workspace-switcher">
-          <span className="workspace-avatar">S</span>
-          <span className="workspace-name">Small business</span>
+          <span className="workspace-avatar">{workspaceName.charAt(0).toUpperCase() || 'S'}</span>
+          <span className="workspace-name">{workspaceName}</span>
           <span className="workspace-chevron">⌄</span>
         </div>
 
@@ -532,10 +756,15 @@ function App() {
             <Icon name="chart" />
             <span>Dashboard</span>
           </button>
-          <a className="nav-item disabled-nav" href="#business" onClick={(event) => event.preventDefault()}>
+          <button
+            className={`nav-item ${activePage === 'settings' ? 'active' : ''}`}
+            type="button"
+            onClick={() => setActivePage('settings')}
+            aria-current={activePage === 'settings' ? 'page' : undefined}
+          >
             <Icon name="building" />
-            <span>Business</span>
-          </a>
+            <span>Settings</span>
+          </button>
         </nav>
 
         <div className="sidebar-bottom">
@@ -550,7 +779,7 @@ function App() {
 
       <main className="main-content" id={activePage}>
         <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-separator">/</span><strong>{activePage === 'inbox' ? 'Inbox' : 'Dashboard'}</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-separator">/</span><strong>{titleCase(activePage)}</strong></div>
           <div className="topbar-right">
             <span className="today-label">{new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())}</span>
             <span className="user-avatar">Y</span>
@@ -560,12 +789,14 @@ function App() {
         <section className="inbox-content">
           <div className="page-heading">
             <div>
-              <div className="eyebrow"><span className="eyebrow-line" /> {activePage === 'inbox' ? 'CUSTOMER CARE' : 'WORKSPACE OVERVIEW'}</div>
-              <h1>{activePage === 'inbox' ? 'Complaint inbox' : 'Dashboard'}</h1>
+              <div className="eyebrow"><span className="eyebrow-line" /> {activePage === 'inbox' ? 'CUSTOMER CARE' : activePage === 'dashboard' ? 'WORKSPACE OVERVIEW' : 'WORKSPACE SETTINGS'}</div>
+              <h1>{activePage === 'inbox' ? 'Complaint inbox' : activePage === 'dashboard' ? 'Dashboard' : 'Settings'}</h1>
               <p className="page-subtitle">
                 {activePage === 'inbox'
                   ? 'A clear view of every customer concern, all in one place.'
-                  : 'A clear picture of customer concerns and how your team is responding.'}
+                  : activePage === 'dashboard'
+                    ? 'A clear picture of customer concerns and how your team is responding.'
+                    : 'Keep your business details up to date.'}
               </p>
             </div>
             {activePage === 'inbox' && (
@@ -583,6 +814,11 @@ function App() {
 
           {activePage === 'dashboard' ? (
             <DashboardPage />
+          ) : activePage === 'settings' ? (
+            <SettingsPage
+              activeBusinessId={activeBusinessId}
+              onBusinessSaved={handleBusinessSaved}
+            />
           ) : (
             <>
           <div className="submit-area">
