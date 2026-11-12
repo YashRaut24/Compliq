@@ -26,6 +26,54 @@ function getStoredBusinessId() {
   }
 }
 
+function getRequestErrorMessage(error, fallback) {
+  const apiMessage = error?.response?.data?.message
+  if (typeof apiMessage === 'string' && apiMessage) return apiMessage
+  if (!axios.isAxiosError(error) && error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
+function isCountRecord(value, keys) {
+  return value !== null &&
+    typeof value === 'object' &&
+    keys.every((key) => Number.isInteger(value[key]) && value[key] >= 0)
+}
+
+function isDashboardStats(value) {
+  return value !== null &&
+    typeof value === 'object' &&
+    Number.isInteger(value.total) &&
+    value.total >= 0 &&
+    Number.isInteger(value.unresolved) &&
+    value.unresolved >= 0 &&
+    Number.isInteger(value.urgent) &&
+    value.urgent >= 0 &&
+    isCountRecord(value.byCategory, ['refund', 'delay', 'abuse', 'other']) &&
+    isCountRecord(value.byPriority, ['low', 'normal', 'high', 'urgent']) &&
+    isCountRecord(value.byStatus, ['new', 'in_review', 'resolved']) &&
+    isCountRecord(value.bySentiment, ['positive', 'neutral', 'negative'])
+}
+
+function isBusiness(value) {
+  return value !== null &&
+    typeof value === 'object' &&
+    typeof value._id === 'string' &&
+    typeof value.name === 'string' &&
+    (value.industry === undefined || typeof value.industry === 'string')
+}
+
+function isComplaint(value) {
+  return value !== null &&
+    typeof value === 'object' &&
+    (typeof value._id === 'string' || typeof value.id === 'string') &&
+    typeof value.message === 'string' &&
+    ['issueType', 'source', 'replyDraft'].every(
+      (key) => value[key] === undefined || typeof value[key] === 'string',
+    )
+}
+
 const categories = [
   { value: '', label: 'All categories' },
   { value: 'refund', label: 'Refund' },
@@ -125,13 +173,16 @@ function DashboardPage() {
         const response = await axios.get(`${API_BASE_URL}/stats`, {
           signal: controller.signal,
         })
+        if (!isDashboardStats(response.data)) {
+          throw new Error('The server returned invalid dashboard statistics.')
+        }
         setStats(response.data)
       } catch (requestError) {
         if (controller.signal.aborted) return
-        setError(
-          requestError.response?.data?.message ||
-            'Could not load dashboard statistics. Check that the API server is running and try again.',
-        )
+        setError(getRequestErrorMessage(
+          requestError,
+          'Could not load dashboard statistics. Check that the API server is running and try again.',
+        ))
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -312,13 +363,16 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
           `${API_BASE_URL}/businesses/${encodeURIComponent(activeBusinessId)}`,
           { signal: controller.signal },
         )
+        if (!isBusiness(response.data?.business)) {
+          throw new Error('The server returned an invalid business profile.')
+        }
         setName(response.data.business.name)
         setIndustry(response.data.business.industry || '')
         setBusinessId(activeBusinessId)
         setLoadedBusinessId(activeBusinessId)
       } catch (requestError) {
         if (controller.signal.aborted) return
-        setError(requestError.response?.data?.message || 'Could not load this business profile.')
+        setError(getRequestErrorMessage(requestError, 'Could not load this business profile.'))
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -340,6 +394,9 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
     setSuccess('')
     try {
       const response = await axios.get(`${API_BASE_URL}/businesses/${encodeURIComponent(requestedId)}`)
+      if (!isBusiness(response.data?.business)) {
+        throw new Error('The server returned an invalid business profile.')
+      }
       setName(response.data.business.name)
       setIndustry(response.data.business.industry || '')
       setBusinessId(requestedId)
@@ -347,7 +404,7 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
       onBusinessSaved(response.data.business)
       setSuccess('Business profile loaded.')
     } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Could not load this business profile.')
+      setError(getRequestErrorMessage(requestError, 'Could not load this business profile.'))
     } finally {
       setLoading(false)
     }
@@ -364,7 +421,10 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
       const response = loadedBusinessId && loadedBusinessId === businessId.trim()
         ? await axios.patch(`${API_BASE_URL}/businesses/${encodeURIComponent(loadedBusinessId)}`, payload)
         : await axios.post(`${API_BASE_URL}/businesses`, payload)
-      const business = response.data.business
+      const business = response.data?.business
+      if (!isBusiness(business)) {
+        throw new Error('The server returned an invalid business profile.')
+      }
       const savedId = business._id
       let successMessage = 'Business profile saved.'
 
@@ -382,7 +442,7 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
       setError('')
       setSuccess(successMessage)
     } catch (requestError) {
-      setError(requestError.response?.data?.message || 'Could not save this business profile.')
+      setError(getRequestErrorMessage(requestError, 'Could not save this business profile.'))
     } finally {
       setSaving(false)
     }
@@ -410,6 +470,22 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
           </div>
         </div>
 
+        {loading && (
+          <div className="settings-loading" role="status">
+            <span className="loading-spinner" />
+            <span>Loading business profile…</span>
+          </div>
+        )}
+        {!loading && !activeBusinessId && !hasLoadedProfile && (
+          <div className="settings-empty-state">
+            <div className="empty-icon"><Icon name="building" size={20} /></div>
+            <div>
+              <strong>No business profile selected</strong>
+              <p>Create a new profile below, or enter an existing business ID to load one.</p>
+            </div>
+          </div>
+        )}
+
         <form className="settings-form" onSubmit={saveBusiness}>
           <div className="settings-id-row">
             <div className="form-field">
@@ -417,6 +493,7 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
               <input
                 id="settings-business-id"
                 value={businessId}
+                disabled={loading || saving}
                 onChange={(event) => {
                   setBusinessId(event.target.value)
                   setError('')
@@ -446,6 +523,7 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
             <input
               id="settings-business-name"
               value={name}
+              disabled={loading || saving}
               onChange={(event) => setName(event.target.value)}
               placeholder="e.g. Northside Family Clinic"
               maxLength={120}
@@ -458,6 +536,7 @@ function SettingsPage({ activeBusinessId, onBusinessSaved }) {
             <input
               id="settings-business-industry"
               value={industry}
+              disabled={loading || saving}
               onChange={(event) => setIndustry(event.target.value)}
               placeholder="e.g. Healthcare, retail, hospitality"
               maxLength={120}
@@ -516,13 +595,14 @@ function ComplaintCard({ complaint, onReplyUpdated }) {
         `${API_BASE_URL}/complaints/${id}/reply`,
         { replyDraft },
       )
+      if (!isComplaint(response.data?.complaint) || typeof response.data.complaint.replyDraft !== 'string') {
+        throw new Error('The server did not confirm the saved reply draft.')
+      }
       onReplyUpdated(response.data.complaint)
       setEditingReply(false)
       setReplySaved(true)
     } catch (requestError) {
-      setReplyError(
-        requestError.response?.data?.message || 'Could not save this reply. Please try again.',
-      )
+      setReplyError(getRequestErrorMessage(requestError, 'Could not save this reply. Please try again.'))
     } finally {
       setSavingReply(false)
     }
@@ -652,13 +732,16 @@ function App() {
           params,
           signal: controller.signal,
         })
+        if (!Array.isArray(response.data?.complaints) || !response.data.complaints.every(isComplaint)) {
+          throw new Error('The server returned an invalid complaint list.')
+        }
         setComplaints(response.data.complaints)
       } catch (requestError) {
         if (controller.signal.aborted) return
-        setError(
-          requestError.response?.data?.message ||
-            'Could not load complaints. Check that the API server is running and try again.',
-        )
+        setError(getRequestErrorMessage(
+          requestError,
+          'Could not load complaints. Check that the API server is running and try again.',
+        ))
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -697,9 +780,7 @@ function App() {
       setSubmitSuccess('Complaint submitted. Its analysis and reply draft are ready.')
       setRefreshKey((key) => key + 1)
     } catch (requestError) {
-      setSubmitError(
-        requestError.response?.data?.message || 'Could not submit the complaint. Please try again.',
-      )
+      setSubmitError(getRequestErrorMessage(requestError, 'Could not submit the complaint. Please try again.'))
     } finally {
       setSubmitting(false)
     }
